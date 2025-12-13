@@ -62,24 +62,7 @@ The server will be available at `http://localhost:8000`
 
 ## ⚙️ Configuration
 
-### Option 1: Environment Variables (.env file)
-
-Create a `.env` file in the project root:
-
-```env
-# Required
-REFRESH_TOKEN="your_kiro_refresh_token"
-
-# Password to protect YOUR proxy server (make up any secure string)
-# You'll use this as api_key when connecting to your gateway
-PROXY_API_KEY="my-super-secret-password-123"
-
-# Optional
-PROFILE_ARN="arn:aws:codewhisperer:us-east-1:..."
-KIRO_REGION="us-east-1"
-```
-
-### Option 2: JSON Credentials File
+### Option 1: JSON Credentials File
 
 Specify the path to the credentials file:
 
@@ -87,6 +70,7 @@ Specify the path to the credentials file:
 KIRO_CREDS_FILE="~/.aws/sso/cache/kiro-auth-token.json"
 
 # Password to protect YOUR proxy server (make up any secure string)
+# You'll use this as api_key when connecting to your gateway
 PROXY_API_KEY="my-super-secret-password-123"
 ```
 
@@ -104,6 +88,22 @@ PROXY_API_KEY="my-super-secret-password-123"
 ```
 
 </details>
+
+### Option 2: Environment Variables (.env file)
+
+Create a `.env` file in the project root:
+
+```env
+# Required
+REFRESH_TOKEN="your_kiro_refresh_token"
+
+# Password to protect YOUR proxy server (make up any secure string)
+PROXY_API_KEY="my-super-secret-password-123"
+
+# Optional
+PROFILE_ARN="arn:aws:codewhisperer:us-east-1:..."
+KIRO_REGION="us-east-1"
+```
 
 ### Getting the Refresh Token
 
