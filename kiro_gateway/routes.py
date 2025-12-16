@@ -281,6 +281,11 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                 }
             )
         
+        # Подготавливаем данные для fallback подсчёта токенов
+        # Конвертируем Pydantic модели в словари для токенизатора
+        messages_for_tokenizer = [msg.model_dump() for msg in request_data.messages]
+        tools_for_tokenizer = [tool.model_dump() for tool in request_data.tools] if request_data.tools else None
+        
         if request_data.stream:
             # Streaming режим
             async def stream_wrapper():
@@ -290,7 +295,9 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                         response,
                         request_data.model,
                         model_cache,
-                        auth_manager
+                        auth_manager,
+                        request_messages=messages_for_tokenizer,
+                        request_tools=tools_for_tokenizer
                     ):
                         yield chunk
                 finally:
@@ -306,7 +313,9 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                 response,
                 request_data.model,
                 model_cache,
-                auth_manager
+                auth_manager,
+                request_messages=messages_for_tokenizer,
+                request_tools=tools_for_tokenizer
             )
             
             await http_client.close()

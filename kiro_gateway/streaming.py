@@ -37,7 +37,7 @@ from loguru import logger
 from kiro_gateway.parsers import AwsEventStreamParser, parse_bracket_tool_calls, deduplicate_tool_calls
 from kiro_gateway.utils import generate_completion_id
 from kiro_gateway.config import FIRST_TOKEN_TIMEOUT, FIRST_TOKEN_MAX_RETRIES
-from kiro_gateway.tokenizer import count_tokens
+from kiro_gateway.tokenizer import count_tokens, count_message_tokens, count_tools_tokens
 
 if TYPE_CHECKING:
     from kiro_gateway.auth import KiroAuthManager
@@ -61,7 +61,9 @@ async def stream_kiro_to_openai_internal(
     model: str,
     model_cache: "ModelInfoCache",
     auth_manager: "KiroAuthManager",
-    first_token_timeout: float = FIRST_TOKEN_TIMEOUT
+    first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
+    request_messages: Optional[list] = None,
+    request_tools: Optional[list] = None
 ) -> AsyncGenerator[str, None]:
     """
     Внутренний генератор для преобразования потока Kiro в OpenAI формат.
@@ -79,6 +81,8 @@ async def stream_kiro_to_openai_internal(
         model_cache: Кэш моделей для получения лимитов токенов
         auth_manager: Менеджер аутентификации
         first_token_timeout: Таймаут ожидания первого токена (секунды)
+        request_messages: Исходные сообщения запроса (для fallback подсчёта токенов)
+        request_tools: Исходные инструменты запроса (для fallback подсчёта токенов)
     
     Yields:
         Строки в формате SSE: "data: {...}\\n\\n" или "data: [DONE]\\n\\n"
@@ -209,20 +213,37 @@ async def stream_kiro_to_openai_internal(
         # Определяем finish_reason
         finish_reason = "tool_calls" if all_tool_calls else "stop"
         
-        # Вычисляем total_tokens на основе context_usage_percentage
-        # context_usage показывает ОБЩИЙ процент использования контекста (input + output)
-        total_tokens_from_api = 0
-        if context_usage_percentage is not None:
-            max_input_tokens = model_cache.get_max_input_tokens(model)
-            total_tokens_from_api = int((context_usage_percentage / 100) * max_input_tokens)
-        
         # Подсчитываем completion_tokens (output) с помощью tiktoken
         completion_tokens = count_tokens(full_content)
         
-        # prompt_tokens (input) = total_tokens - completion_tokens
-        # Это логично: общее использование контекста минус токены ответа = токены запроса
-        prompt_tokens = max(0, total_tokens_from_api - completion_tokens)
-        total_tokens = total_tokens_from_api
+        # Вычисляем total_tokens на основе context_usage_percentage от API Kiro
+        # context_usage показывает ОБЩИЙ процент использования контекста (input + output)
+        total_tokens_from_api = 0
+        if context_usage_percentage is not None and context_usage_percentage > 0:
+            max_input_tokens = model_cache.get_max_input_tokens(model)
+            total_tokens_from_api = int((context_usage_percentage / 100) * max_input_tokens)
+        
+        # Определяем источник данных и вычисляем токены
+        if total_tokens_from_api > 0:
+            # Используем данные от API Kiro
+            # prompt_tokens (input) = total_tokens - completion_tokens
+            prompt_tokens = max(0, total_tokens_from_api - completion_tokens)
+            total_tokens = total_tokens_from_api
+            prompt_source = "subtraction"
+            total_source = "API Kiro"
+        else:
+            # Fallback: API Kiro не вернул context_usage, используем tiktoken
+            # Подсчитываем prompt_tokens из исходных сообщений
+            # ВАЖНО: Не применяем коэффициент коррекции для prompt_tokens,
+            # так как он был калиброван для completion_tokens
+            prompt_tokens = 0
+            if request_messages:
+                prompt_tokens += count_message_tokens(request_messages, apply_claude_correction=False)
+            if request_tools:
+                prompt_tokens += count_tools_tokens(request_tools, apply_claude_correction=False)
+            total_tokens = prompt_tokens + completion_tokens
+            prompt_source = "tiktoken"
+            total_source = "tiktoken"
         
         # Отправляем tool calls если есть
         if all_tool_calls:
@@ -284,9 +305,9 @@ async def stream_kiro_to_openai_internal(
         # Логируем финальные значения токенов которые отправляются клиенту
         logger.debug(
             f"[Usage] {model}: "
-            f"prompt_tokens={prompt_tokens} (subtraction), "
+            f"prompt_tokens={prompt_tokens} ({prompt_source}), "
             f"completion_tokens={completion_tokens} (tiktoken), "
-            f"total_tokens={total_tokens} (API Kiro)"
+            f"total_tokens={total_tokens} ({total_source})"
         )
         
         yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n"
@@ -307,7 +328,9 @@ async def stream_kiro_to_openai(
     response: httpx.Response,
     model: str,
     model_cache: "ModelInfoCache",
-    auth_manager: "KiroAuthManager"
+    auth_manager: "KiroAuthManager",
+    request_messages: Optional[list] = None,
+    request_tools: Optional[list] = None
 ) -> AsyncGenerator[str, None]:
     """
     Генератор для преобразования потока Kiro в OpenAI формат.
@@ -321,12 +344,16 @@ async def stream_kiro_to_openai(
         model: Имя модели для включения в ответ
         model_cache: Кэш моделей для получения лимитов токенов
         auth_manager: Менеджер аутентификации
+        request_messages: Исходные сообщения запроса (для fallback подсчёта токенов)
+        request_tools: Исходные инструменты запроса (для fallback подсчёта токенов)
     
     Yields:
         Строки в формате SSE: "data: {...}\\n\\n" или "data: [DONE]\\n\\n"
     """
     async for chunk in stream_kiro_to_openai_internal(
-        client, response, model, model_cache, auth_manager
+        client, response, model, model_cache, auth_manager,
+        request_messages=request_messages,
+        request_tools=request_tools
     ):
         yield chunk
 
@@ -338,7 +365,9 @@ async def stream_with_first_token_retry(
     model_cache: "ModelInfoCache",
     auth_manager: "KiroAuthManager",
     max_retries: int = FIRST_TOKEN_MAX_RETRIES,
-    first_token_timeout: float = FIRST_TOKEN_TIMEOUT
+    first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
+    request_messages: Optional[list] = None,
+    request_tools: Optional[list] = None
 ) -> AsyncGenerator[str, None]:
     """
     Streaming с автоматическим retry при таймауте первого токена.
@@ -357,6 +386,8 @@ async def stream_with_first_token_retry(
         auth_manager: Менеджер аутентификации
         max_retries: Максимальное количество попыток
         first_token_timeout: Таймаут ожидания первого токена (секунды)
+        request_messages: Исходные сообщения запроса (для fallback подсчёта токенов)
+        request_tools: Исходные инструменты запроса (для fallback подсчёта токенов)
     
     Yields:
         Строки в формате SSE
@@ -407,7 +438,9 @@ async def stream_with_first_token_retry(
                 model,
                 model_cache,
                 auth_manager,
-                first_token_timeout=first_token_timeout
+                first_token_timeout=first_token_timeout,
+                request_messages=request_messages,
+                request_tools=request_tools
             ):
                 yield chunk
             
@@ -451,7 +484,9 @@ async def collect_stream_response(
     response: httpx.Response,
     model: str,
     model_cache: "ModelInfoCache",
-    auth_manager: "KiroAuthManager"
+    auth_manager: "KiroAuthManager",
+    request_messages: Optional[list] = None,
+    request_tools: Optional[list] = None
 ) -> dict:
     """
     Собирает полный ответ из streaming потока.
@@ -465,6 +500,8 @@ async def collect_stream_response(
         model: Имя модели
         model_cache: Кэш моделей
         auth_manager: Менеджер аутентификации
+        request_messages: Исходные сообщения запроса (для fallback подсчёта токенов)
+        request_tools: Исходные инструменты запроса (для fallback подсчёта токенов)
     
     Returns:
         Словарь с полным ответом в формате OpenAI chat.completion
@@ -479,7 +516,9 @@ async def collect_stream_response(
         response,
         model,
         model_cache,
-        auth_manager
+        auth_manager,
+        request_messages=request_messages,
+        request_tools=request_tools
     ):
         if not chunk_str.startswith("data:"):
             continue
