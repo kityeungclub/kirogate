@@ -2161,19 +2161,18 @@ async def api_import_tokens(
         return JSONResponse(status_code=401, content={"error": "Import Key 无效"})
 
     user_id, import_key_obj = result
-    try:
-        user = user_db.get_user(user_id)
-        if not user:
-            return JSONResponse(status_code=404, content={"error": "用户不存在"})
-        if user.is_banned:
-            return JSONResponse(status_code=403, content={"error": "用户已被封禁"})
+    user = user_db.get_user(user_id)
+    if not user:
+        return JSONResponse(status_code=404, content={"error": "用户不存在"})
+    if user.is_banned:
+        return JSONResponse(status_code=403, content={"error": "用户已被封禁"})
 
-        from kiro_gateway.metrics import metrics
-        if metrics.is_self_use_enabled() and visibility == "public":
-            return JSONResponse(status_code=403, content={"error": "自用模式下禁止公开 Token"})
+    from kiro_gateway.metrics import metrics
+    if metrics.is_self_use_enabled() and visibility == "public":
+        return JSONResponse(status_code=403, content={"error": "自用模式下禁止公开 Token"})
 
-        if visibility not in ("public", "private"):
-            return JSONResponse(status_code=400, content={"error": "可见性无效"})
+    if visibility not in ("public", "private"):
+        return JSONResponse(status_code=400, content={"error": "可见性无效"})
 
     payload, error, status = await _read_import_payload(
         file=file,
@@ -2182,21 +2181,19 @@ async def api_import_tokens(
         json_text=json_text,
         allow_file_path=False
     )
-        if error:
-            return JSONResponse(status_code=status or 400, content={"error": error})
+    if error:
+        return JSONResponse(status_code=status or 400, content={"error": error})
 
-        result, status = await _process_import_payload(
-            user_id=user_id,
-            visibility=visibility,
-            anonymous=anonymous,
-            payload=payload
-        )
-        if status != 200:
-            return JSONResponse(status_code=status, content=result)
-        user_db.record_import_key_usage(import_key_obj.id)
-        return result
-    finally:
-        pass
+    result, status = await _process_import_payload(
+        user_id=user_id,
+        visibility=visibility,
+        anonymous=anonymous,
+        payload=payload
+    )
+    if status != 200:
+        return JSONResponse(status_code=status, content=result)
+    user_db.record_import_key_usage(import_key_obj.id)
+    return result
 
 
 @router.put("/user/api/tokens/{token_id}", include_in_schema=False)

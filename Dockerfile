@@ -35,4 +35,4 @@ EXPOSE 8000
 # 等服务稳定后再加回 /health
 
 # 启动 FastAPI
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "main.py"]

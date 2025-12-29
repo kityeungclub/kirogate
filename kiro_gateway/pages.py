@@ -3873,21 +3873,21 @@ def render_user_page(user) -> str:
         user_info = ''
     user_info_html = f'<div class="mt-1">{user_info}</div>' if user_info else ''
 
-    return f'''<!DOCTYPE html>
+    page_template = '''<!DOCTYPE html>
 <html lang="zh">
-<head>{COMMON_HEAD}</head>
-<body data-self-use="{body_self_use_attr}">
-  {COMMON_NAV}
+<head>__COMMON_HEAD__</head>
+<body data-self-use="__BODY_SELF_USE_ATTR__">
+  __COMMON_NAV__
   <main class="max-w-6xl mx-auto px-4 py-8">
     <div class="card mb-6 user-hero">
       <div class="flex flex-col sm:flex-row sm:items-center gap-4">
-        {avatar_html}
+        __AVATAR_HTML__
         <div class="flex-1">
           <div class="flex items-center gap-2 flex-wrap">
-            <h1 class="text-2xl font-bold">你好，{display_name}</h1>
+            <h1 class="text-2xl font-bold">你好，__DISPLAY_NAME__</h1>
           </div>
           <p id="greetingText" class="text-sm" style="color: var(--text-muted);">欢迎回来，今天想先做什么？</p>
-          {user_info_html}
+          __USER_INFO_HTML__
           <div class="flex flex-wrap gap-2 mt-3">
             <button type="button" onclick="showTab('tokens'); showTokenSubTab('mine'); showDonateModal();" class="btn-primary text-sm px-3 py-1.5">+ 添加 Token</button>
             <button type="button" onclick="showTab('keys'); generateKey();" class="text-sm px-3 py-1.5 rounded-lg" style="background: var(--bg-input); border: 1px solid var(--border);">生成 API Key</button>
@@ -4262,7 +4262,7 @@ def render_user_page(user) -> str:
       </div>
     </div>
   </div>
-  {COMMON_FOOTER}
+  __COMMON_FOOTER__
   <style>
     .user-hero {{
       border: 1px solid rgba(56, 189, 248, 0.25);
@@ -5471,6 +5471,21 @@ def render_user_page(user) -> str:
   </script>
 </body>
 </html>'''
+
+    # Unescape doubled braces from the original f-string so JS/CSS renders correctly.
+    page_template = page_template.replace("{{", "{").replace("}}", "}")
+    replacements = {
+        "__COMMON_HEAD__": COMMON_HEAD,
+        "__BODY_SELF_USE_ATTR__": body_self_use_attr,
+        "__COMMON_NAV__": COMMON_NAV,
+        "__AVATAR_HTML__": avatar_html,
+        "__DISPLAY_NAME__": display_name,
+        "__USER_INFO_HTML__": user_info_html,
+        "__COMMON_FOOTER__": COMMON_FOOTER,
+    }
+    for placeholder, value in replacements.items():
+        page_template = page_template.replace(placeholder, value)
+    return page_template
 
 
 def render_tokens_page(user=None) -> str:
